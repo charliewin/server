@@ -12,8 +12,12 @@
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02111-1301 USA */
-
+#ifndef JSON_WRITER_INCLUDED
+#define JSON_WRITER_INCLUDED
+class Opt_trace_stmt;
+class Opt_trace_context;
 class Json_writer;
+struct TABLE_LIST;
 
 /*
   Single_line_formatting_helper is used by Json_writer to do better formatting
@@ -85,7 +89,7 @@ public:
   void on_start_object();
   // on_end_object() is not needed.
    
-  bool on_add_str(const char *str);
+  bool on_add_str(const char *str, size_t length);
 
   void flush_on_one_line();
   void disable_and_flush();
@@ -105,13 +109,17 @@ public:
   
   /* Add atomic values */
   void add_str(const char* val);
+  void add_str(const char* val, size_t length);
   void add_str(const String &str);
+  void add_str(Item *item);
 
   void add_ll(longlong val);
   void add_size(longlong val);
   void add_double(double val);
   void add_bool(bool val);
   void add_null();
+  void add_table_name(TABLE_LIST *tab);
+
 
 private:
   void add_unquoted_str(const char* val);
@@ -129,6 +137,12 @@ public:
   {
     fmt_helper.init(this);
   }
+  Json_writer(Opt_trace_context *ctx):indent_level(0), document_start(true),
+    element_started(false), first_child(true)
+  {
+    fmt_helper.init(this);
+    do_construct(ctx);
+  }
 private:
   // TODO: a stack of (name, bool is_object_or_array) elements.
   int indent_level;
@@ -145,10 +159,137 @@ private:
   void append_indent();
   void start_element();
   void start_sub_element();
+  void do_construct(Opt_trace_context* ctx);
 
   //const char *new_member_name;
 public:
   String output;
+  Opt_trace_stmt *stmt;  ///< Trace owning the structure
+};
+
+
+class Json_value_context
+{
+  Json_writer* writer;
+  public:
+  void init(Json_writer *my_writer) { writer= my_writer; }
+  void add_str(const char* val)
+  {
+    if (writer)
+      writer->add_str(val);
+  }
+  void add_str(const char* val, size_t length)
+  {
+    if (writer)
+      writer->add_str(val, length);
+  }
+  void add_str(const String &str)
+  {
+    if (writer)
+      writer->add_str(str);
+  }
+  void add_str(LEX_CSTRING str)
+  {
+    if (writer)
+      writer->add_str(str.str);
+  }
+  void add_str(Item *item)
+  {
+    if (writer)
+      writer->add_str(item);
+  }
+
+  void add_ll(longlong val)
+  {
+    if (writer)
+      writer->add_ll(val);
+  }
+  void add_size(longlong val)
+  {
+    if (writer)
+      writer->add_size(val);
+  }
+  void add_double(double val)
+  {
+    if (writer)
+      writer->add_double(val);
+  }
+  void add_bool(bool val)
+  {
+    if (writer)
+      writer->add_bool(val);
+  }
+  void add_null()
+  {
+    if (writer)
+      writer->add_null();
+  }
+  void add_table_name(TABLE_LIST *tab)
+  {
+    if (writer)
+      writer->add_table_name(tab);
+  }
+};
+
+/* A common base for Json_writer_object and Json_writer_array */
+class Json_writer_struct
+{
+protected:
+  Json_writer* my_writer;
+  Json_value_context context;
+  bool closed;
+
+public:
+  Json_writer_struct(Json_writer* writer)
+  {
+    my_writer= writer;
+    context.init(writer);
+    closed= false;
+  }
+  Json_value_context& get_value_context() { return context; }
+};
+
+
+/*
+  RAII-based class to start/end writing a JSON object into the JSON document
+*/
+
+class Json_writer_object:public Json_writer_struct
+{
+public:
+  Json_writer_object(Json_writer *w);
+  Json_writer_object(Json_writer *w, const char *str);
+  Json_value_context& add_member(const char *name)
+  {
+    if (my_writer)
+      my_writer->add_member(name);
+    return context;
+  }
+  void end()
+  {
+    if (my_writer)
+      my_writer->end_object();
+    closed= TRUE;
+  }
+  ~Json_writer_object();
+};
+
+
+/*
+  RAII-based class to start/end writing a JSON array into the JSON document
+*/
+class Json_writer_array:public Json_writer_struct
+{
+public:
+  Json_writer_array(Json_writer *w);
+  Json_writer_array(Json_writer *w, const char *str);
+  void end()
+  {
+    if (my_writer)
+      my_writer->end_array();
+    closed= TRUE;
+  }
+  ~Json_writer_array();
 };
 
 
@@ -191,5 +332,5 @@ public:
   }
 #endif
 };
-
+#endif
 

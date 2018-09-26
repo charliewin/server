@@ -15,8 +15,8 @@
 
 #include "mariadb.h"
 #include "sql_priv.h"
+#include "sql_array.h"
 #include "sql_string.h"
-
 #include "my_json_writer.h"
 
 void Json_writer::append_indent()
@@ -62,6 +62,7 @@ void Json_writer::end_object()
   indent_level-=INDENT_SIZE;
   if (!first_child)
     append_indent();
+  first_child= false;
   output.append("}");
 }
 
@@ -129,7 +130,6 @@ void Json_writer::add_ll(longlong val)
   add_unquoted_str(buf);
 }
 
-
 /* Add a memory size, printing in Kb, Kb, Gb if necessary */
 void Json_writer::add_size(longlong val)
 {
@@ -173,7 +173,7 @@ void Json_writer::add_null()
 
 void Json_writer::add_unquoted_str(const char* str)
 {
-  if (fmt_helper.on_add_str(str))
+  if (fmt_helper.on_add_str(str, 0))
     return;
 
   if (!element_started)
@@ -186,7 +186,7 @@ void Json_writer::add_unquoted_str(const char* str)
 
 void Json_writer::add_str(const char *str)
 {
-  if (fmt_helper.on_add_str(str))
+  if (fmt_helper.on_add_str(str, 0))
     return;
 
   if (!element_started)
@@ -198,10 +198,66 @@ void Json_writer::add_str(const char *str)
   element_started= false;
 }
 
+void Json_writer::add_str(const char *str, size_t length)
+{
+  if (fmt_helper.on_add_str(str, length))
+    return;
+
+  if (!element_started)
+    start_element();
+
+  output.append('"');
+  output.append(str, length);
+  output.append('"');
+  element_started= false;
+}
+
 
 void Json_writer::add_str(const String &str)
 {
-  add_str(str.ptr());
+  add_str(str.ptr(), str.length());
+}
+
+
+Json_writer_object::Json_writer_object(Json_writer *writer):Json_writer_struct(writer)
+{
+  if (my_writer)
+    my_writer->start_object();
+}
+
+Json_writer_object::Json_writer_object(Json_writer *writer, const char *str)
+                                       :Json_writer_struct(writer)
+{
+  if (my_writer)
+    my_writer->add_member(str).start_object();
+
+}
+Json_writer_object::~Json_writer_object()
+{
+  if (!closed && my_writer)
+    my_writer->end_object();
+  closed= TRUE;
+}
+
+
+Json_writer_array::Json_writer_array(Json_writer *writer):Json_writer_struct(writer)
+{
+  if (my_writer)
+    my_writer->start_array();
+}
+
+Json_writer_array::Json_writer_array(Json_writer *writer, const char *str)
+                                       :Json_writer_struct(writer)
+{
+  if (my_writer)
+    my_writer->add_member(str).start_array();
+
+}
+Json_writer_array::~Json_writer_array()
+{
+  if (!closed && my_writer)
+    my_writer->end_array();
+  closed= TRUE;
 }
 
 
@@ -267,11 +323,11 @@ void Single_line_formatting_helper::on_start_object()
 }
 
 
-bool Single_line_formatting_helper::on_add_str(const char *str)
+bool Single_line_formatting_helper::on_add_str(const char *str, size_t length)
 {
   if (state == IN_ARRAY)
   {
-    size_t len= strlen(str);
+    size_t len= length ? length : strlen(str);
 
     // New length will be:
     //  "$string", 
