@@ -628,7 +628,7 @@ extern mysql_mutex_t
        LOCK_global_system_variables, LOCK_user_conn,
        LOCK_prepared_stmt_count, LOCK_error_messages, LOCK_connection_count,
        LOCK_slave_background;
-extern MYSQL_PLUGIN_IMPORT mysql_mutex_t LOCK_thread_count;
+extern MYSQL_PLUGIN_IMPORT mysql_rwlock_t LOCK_thread_count;
 extern mysql_mutex_t LOCK_start_thread;
 #ifdef HAVE_OPENSSL
 extern char* des_key_file;

@@ -4852,9 +4852,9 @@ public:
   */
   inline void reset_current_linfo()
   {
-    mysql_mutex_lock(&LOCK_thread_count);
+    mysql_rwlock_wrlock(&LOCK_thread_count);
     current_linfo= 0;
-    mysql_mutex_unlock(&LOCK_thread_count);
+    mysql_rwlock_unlock(&LOCK_thread_count);
   }
 
 
@@ -4918,9 +4918,9 @@ public:
 
 inline void add_to_active_threads(THD *thd)
 {
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_wrlock(&LOCK_thread_count);
   threads.append(thd);
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 }
 
 /*
@@ -4932,9 +4932,9 @@ inline void add_to_active_threads(THD *thd)
 inline void unlink_not_visible_thd(THD *thd)
 {
   thd->assert_linked();
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_wrlock(&LOCK_thread_count);
   thd->unlink();
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 }
 
 /** A short cut for thd->get_stmt_da()->set_ok_status(). */
