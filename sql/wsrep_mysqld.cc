@@ -2026,7 +2026,7 @@ pthread_handler_t start_wsrep_THD(void *arg)
     goto error;
   }
 
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_wrlock(&LOCK_thread_count);
 
   if (wsrep_gtid_mode)
   {
@@ -2042,7 +2042,7 @@ pthread_handler_t start_wsrep_THD(void *arg)
 
   DBUG_PRINT("wsrep",(("creating thread %lld"), (long long)thd->thread_id));
   thd->prior_thr_create_utime= thd->start_utime= microsecond_interval_timer();
-  (void) mysql_mutex_unlock(&LOCK_thread_count);
+  (void) mysql_rwlock_unlock(&LOCK_thread_count);
 
   /* from bootstrap()... */
   thd->bootstrap=1;
@@ -2093,20 +2093,20 @@ pthread_handler_t start_wsrep_THD(void *arg)
   thd->set_command(COM_SLEEP);
   thd->init_for_queries();
 
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_wrlock(&LOCK_thread_count);
   wsrep_running_threads++;
   mysql_cond_broadcast(&COND_thread_count);
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 
   processor(thd);
 
   close_connection(thd, 0);
 
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_wrlock(&LOCK_thread_count);
   wsrep_running_threads--;
   WSREP_DEBUG("wsrep running threads now: %lu", wsrep_running_threads);
   mysql_cond_broadcast(&COND_thread_count);
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 
   // Note: We can't call THD destructor without crashing
   // if plugins have not been initialized. However, in most of the
@@ -2226,7 +2226,7 @@ static void wsrep_close_thread(THD *thd)
 static my_bool have_committing_connections()
 {
   THD *tmp;
-  mysql_mutex_lock(&LOCK_thread_count); // For unlink from list
+  mysql_rwlock_wrlock(&LOCK_thread_count); // For unlink from list
 
   I_List_iterator<THD> it(threads);
   while ((tmp=it++))
@@ -2239,7 +2239,7 @@ static my_bool have_committing_connections()
       return TRUE;
     }
   }
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
   return FALSE;
 }
 
@@ -2269,7 +2269,7 @@ void wsrep_close_client_connections(my_bool wait_to_end, THD *except_caller_thd)
   */
 
   THD *tmp;
-  mysql_mutex_lock(&LOCK_thread_count); // For unlink from list
+  mysql_rwlock_rdlock(&LOCK_thread_count); // For unlink from list
 
   bool kill_cached_threads_saved= kill_cached_threads;
   kill_cached_threads= true; // prevent future threads caching
@@ -2312,12 +2312,12 @@ void wsrep_close_client_connections(my_bool wait_to_end, THD *except_caller_thd)
     mysql_mutex_unlock(&tmp->LOCK_thd_data);
 
   }
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 
   if (thread_count)
     sleep(2);                               // Give threads time to die
 
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_rdlock(&LOCK_thread_count);
   /*
     Force remaining threads to die by closing the connection to the client
   */
@@ -2342,13 +2342,14 @@ void wsrep_close_client_connections(my_bool wait_to_end, THD *except_caller_thd)
 
   while (wait_to_end && have_client_connections())
   {
-    mysql_cond_wait(&COND_thread_count, &LOCK_thread_count);
+    //mysql_cond_wait(&COND_thread_count, &LOCK_thread_count);
+    my_sleep(100);
     DBUG_PRINT("quit",("One thread died (count=%u)", thread_count));
   }
 
   kill_cached_threads= kill_cached_threads_saved;
 
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 
   /* All client connection threads have now been aborted */
 }
@@ -2364,7 +2365,7 @@ void wsrep_close_applier(THD *thd)
 void wsrep_close_threads(THD *thd)
 {
   THD *tmp;
-  mysql_mutex_lock(&LOCK_thread_count); // For unlink from list
+  mysql_rwlock_rdlock(&LOCK_thread_count); // For unlink from list
 
   I_List_iterator<THD> it(threads);
   while ((tmp=it++))
@@ -2379,46 +2380,46 @@ void wsrep_close_threads(THD *thd)
     }
   }
 
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 }
 
 void wsrep_wait_appliers_close(THD *thd)
 {
   /* Wait for wsrep appliers to gracefully exit */
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_rdlock(&LOCK_thread_count);
   while (wsrep_running_threads > 1)
   // 1 is for rollbacker thread which needs to be killed explicitly.
   // This gotta be fixed in a more elegant manner if we gonna have arbitrary
   // number of non-applier wsrep threads.
   {
-    if (thread_handling > SCHEDULER_ONE_THREAD_PER_CONNECTION)
+    //if (thread_handling > SCHEDULER_ONE_THREAD_PER_CONNECTION)
     {
-      mysql_mutex_unlock(&LOCK_thread_count);
+      mysql_rwlock_unlock(&LOCK_thread_count);
       my_sleep(100);
-      mysql_mutex_lock(&LOCK_thread_count);
+      mysql_rwlock_rdlock(&LOCK_thread_count);
     }
-    else
-      mysql_cond_wait(&COND_thread_count,&LOCK_thread_count);
+    //else
+    //  mysql_cond_wait(&COND_thread_count,&LOCK_thread_count);
     DBUG_PRINT("quit",("One applier died (count=%u)",thread_count));
   }
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
   /* Now kill remaining wsrep threads: rollbacker */
   wsrep_close_threads (thd);
   /* and wait for them to die */
-  mysql_mutex_lock(&LOCK_thread_count);
+  mysql_rwlock_rdlock(&LOCK_thread_count);
   while (wsrep_running_threads > 0)
   {
-   if (thread_handling > SCHEDULER_ONE_THREAD_PER_CONNECTION)
+   //if (thread_handling > SCHEDULER_ONE_THREAD_PER_CONNECTION)
     {
-      mysql_mutex_unlock(&LOCK_thread_count);
+      mysql_rwlock_unlock(&LOCK_thread_count);
       my_sleep(100);
-      mysql_mutex_lock(&LOCK_thread_count);
+      mysql_rwlock_rdlock(&LOCK_thread_count);
     }
-    else
-      mysql_cond_wait(&COND_thread_count,&LOCK_thread_count);
+    //else
+    //  mysql_cond_wait(&COND_thread_count,&LOCK_thread_count);
     DBUG_PRINT("quit",("One thread died (count=%u)",thread_count));
   }
-  mysql_mutex_unlock(&LOCK_thread_count);
+  mysql_rwlock_unlock(&LOCK_thread_count);
 
   /* All wsrep applier threads have now been aborted. However, if this thread
      is also applier, we are still running...
